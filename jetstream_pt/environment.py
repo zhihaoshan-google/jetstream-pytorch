@@ -42,7 +42,7 @@ class LoraAdapterConfig:
   checkpoint_path: str = ""
   rank: int = -1
   alpha: int = -1
-  target_modules: List[str] = []
+  target_modules: List[str] = dataclasses.field(default_factory=list)
 
 
 # @dataclasses.dataclass
