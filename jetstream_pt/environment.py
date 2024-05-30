@@ -45,7 +45,7 @@ class LoraAdapterConfig:
   target_modules: List[str] = dataclasses.field(default_factory=list)
 
 
-# @dataclasses.dataclass
+@dataclasses.dataclass
 # pylint: disable-next=all
 class JetEngineEnvironmentData:
   checkpoint_path: str = ""  # if empty string then use model's state_dict()
@@ -60,7 +60,7 @@ class JetEngineEnvironmentData:
 
   quant_config: QuantizationConfig = QuantizationConfig()
 
-  lora_adapter_configs: List[LoraAdapterConfig] = []
+  lora_adapter_configs: List[LoraAdapterConfig] = dataclasses.field(default_factory=list)
 
   model_type: str = "llama-2-13b"  # this implies the model config
 
