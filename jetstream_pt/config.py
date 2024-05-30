@@ -18,7 +18,9 @@ import time
 import jax
 from absl import flags
 from jetstream_pt.engine import create_pytorch_engine
-from jetstream_pt.environment import QuantizationConfig
+from jetstream_pt.lora import engine as lora_engine
+from jetstream_pt.lora import lora_manager
+from jetstream_pt.environment import QuantizationConfig, LoraAdapterConfig
 
 FLAGS = flags.FLAGS
 
@@ -79,6 +81,13 @@ flags.DEFINE_integer(
     required=False,
 )
 
+flags.DEFINE_bool(
+    "enable_lora",
+    False,
+    "Whether to enable Lora",
+    required=False,
+)
+
 
 def create_quantization_config_from_flags():
   """Create Quantization Config from cmd flags"""
@@ -92,6 +101,28 @@ def create_quantization_config_from_flags():
   config.is_blockwise_weight = "blockwise" in quantize_type
   config.enable_kv_quantization = FLAGS.quantize_kv_cache
   return config
+
+
+def lora_configs():
+  """Create Lora Configs by user manual input"""
+  # TODO: find a better interface for user.
+  return [
+      LoraAdapterConfig(
+          name="example_1",
+          checkpoint_path="",
+          rank=-1,
+          alpha=-1,
+          # TODO: Add a map between model name and model's lora module name.
+          target_modules=["q_proj", "v_proj"],
+      ),
+      LoraAdapterConfig(
+          name="example_2",
+          checkpoint_path="",
+          rank=-1,
+          alpha=-1,
+          target_modules=["q_proj", "v_proj"],
+      ),
+  ]
 
 
 def create_engine_from_config_flags():
@@ -119,22 +150,41 @@ def create_engine_from_config_flags():
         "default_shardings", sharding_file_name + ".yaml"
     )
 
-  engine = create_pytorch_engine(
-      model_name=FLAGS.model_name,
-      devices=devices,
-      tokenizer_path=FLAGS.tokenizer_path,
-      ckpt_path=FLAGS.checkpoint_path,
-      bf16_enable=FLAGS.bf16_enable,
-      param_size=FLAGS.size,
-      context_length=FLAGS.context_length,
-      batch_size=FLAGS.batch_size,
-      quant_config=quant_config,
-      max_cache_length=FLAGS.max_cache_length,
-      sharding_config=sharding_file_name,
-      shard_on_batch=FLAGS.shard_on_batch,
-      ragged_mha=FLAGS.ragged_mha,
-      starting_position=FLAGS.starting_position,
-  )
+  if FLAGS.enable_lora:
+    engine = lora_engine.create_lora_pytorch_engine(
+        model_name=FLAGS.model_name,
+        devices=devices,
+        tokenizer_path=FLAGS.tokenizer_path,
+        ckpt_path=FLAGS.checkpoint_path,
+        bf16_enable=FLAGS.bf16_enable,
+        param_size=FLAGS.size,
+        context_length=FLAGS.context_length,
+        batch_size=FLAGS.batch_size,
+        quant_config=quant_config,
+        max_cache_length=FLAGS.max_cache_length,
+        sharding_config=sharding_file_name,
+        shard_on_batch=FLAGS.shard_on_batch,
+        ragged_mha=FLAGS.ragged_mha,
+        starting_position=FLAGS.starting_position,
+        lora_adapter_configs=lora_configs(),
+    )
+  else:
+    engine = create_pytorch_engine(
+        model_name=FLAGS.model_name,
+        devices=devices,
+        tokenizer_path=FLAGS.tokenizer_path,
+        ckpt_path=FLAGS.checkpoint_path,
+        bf16_enable=FLAGS.bf16_enable,
+        param_size=FLAGS.size,
+        context_length=FLAGS.context_length,
+        batch_size=FLAGS.batch_size,
+        quant_config=quant_config,
+        max_cache_length=FLAGS.max_cache_length,
+        sharding_config=sharding_file_name,
+        shard_on_batch=FLAGS.shard_on_batch,
+        ragged_mha=FLAGS.ragged_mha,
+        starting_position=FLAGS.starting_position,
+    )
 
   print("Initialize engine", time.perf_counter() - start)
   return engine

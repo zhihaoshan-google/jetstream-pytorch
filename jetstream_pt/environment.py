@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Tuple, Dict
+from typing import Tuple, Dict, List
 
 import dataclasses
 import yaml
@@ -37,6 +37,15 @@ class QuantizationConfig:
 
 
 @dataclasses.dataclass
+class LoraAdapterConfig:
+  name: str = ""
+  checkpoint_path: str = ""
+  rank: int = -1
+  alpha: int = -1
+  target_modules: List[str] = []
+
+
+# @dataclasses.dataclass
 # pylint: disable-next=all
 class JetEngineEnvironmentData:
   checkpoint_path: str = ""  # if empty string then use model's state_dict()
@@ -50,6 +59,8 @@ class JetEngineEnvironmentData:
   cache_sequence_length: int = 2048  # size of the cache.
 
   quant_config: QuantizationConfig = QuantizationConfig()
+
+  lora_adapter_configs: List[LoraAdapterConfig] = []
 
   model_type: str = "llama-2-13b"  # this implies the model config
 
@@ -66,6 +77,8 @@ class JetEngineEnvironmentData:
   cache_shape: Tuple[int, ...] = ()
 
   num_layers: int = 0
+  model_dim: int = 0
+  ffn_dim: int = 0
 
   # This is the axis to shard among the number of available devices
   # This string must be one of the values of attention_kv_axis_names above
