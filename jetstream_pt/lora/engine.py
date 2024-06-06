@@ -497,6 +497,8 @@ def create_lora_pytorch_engine(
     env_data.model_type = model_name + "-" + param_size
     env_data.num_layers = args.num_hidden_layers
     env_data.model_dim = args.hidden_size
+    env_data.num_heads = args.num_attention_heads
+    env_data.head_dim = args.head_dim
     env_data.ffn_dim = args.intermediate_size
     env = JetEngineEnvironment(env_data)
     print(f"Enviroment variables: {vars(env)}")
