@@ -50,7 +50,7 @@ class Prefix(default_engine.Prefix):
   # token: jax.Array  # [1, seqlen]
   # caches: List[Tuple[jax.Array, jax.Array]]
   # seq_len: int  # true seqlen front pad
-  lora_index: int
+  lora_adapter_index: int
 
 
 @struct.dataclass
@@ -66,7 +66,7 @@ class DecodeState(default_engine.DecodeState):
   # start: jax.Array  # [batch_size, 1], the starting pos for each slot
   # input_pos: jax.Array  # [batch_size, 1] input pos for each slot
   # mask: jax.Array  # [batch_size, seqlen] -inf for invalid; 0 for valid
-  lora_indics: jax.Array  # [batch_size]
+  lora_adapter_indices: jax.Array  # [batch_size]
 
 
 # NOTE model specific
@@ -123,14 +123,16 @@ class LoraPyTorchEngine(default_engine.PyTorchEngine):
     super_state = super().init_decode_state()
     return DecodeState(
         **vars(super_state),
-        lora_indics=jnp.zeros((self.env.batch_size,), dtype=jnp.int32),
+        lora_adapter_indices=jnp.zeros((self.env.batch_size,), dtype=jnp.int32),
     )
 
   @functools.partial(
       jax.jit,
       static_argnums=(0,),
   )
-  def _call_model_prefill(self, weights, tokens, input_indexes, lora_index):
+  def _call_model_prefill(
+      self, weights, tokens, input_indexes, lora_adapter_index
+  ):
     caches = [
         cache_manager.KVCachePrefill(
             self.env.quant_config.enable_kv_quantization
@@ -150,12 +152,16 @@ class LoraPyTorchEngine(default_engine.PyTorchEngine):
         input_indexes,
         caches,
         mask,
-        lora_index,
+        None,
+        None,
+        None,
+        lora_adapter_index,
         lora_weight,
         lora_scaling,
     )
 
     paramst, argst = torchjax.to_torch((weights, args))
+    print(argst)
     with self._lock:
       with torchjax.jax_mode:
         res = torch.func.functional_call(self.pt_model, paramst, argst)[0]
@@ -166,9 +172,9 @@ class LoraPyTorchEngine(default_engine.PyTorchEngine):
       self,
       *,
       params: Any,  # Weights
-      per_request_hyperparams: Any | None = None,
       padded_tokens: PrefillInputs,  # PrefillInputs[jax.Array],
       true_length: int,
+      per_request_hyperparams: Any | None = None,
   ) -> Prefix:
     if isinstance(padded_tokens, jax.Array):
       batched_token = padded_tokens.reshape(1, -1)
@@ -179,12 +185,13 @@ class LoraPyTorchEngine(default_engine.PyTorchEngine):
       )
     seq_len = padded_tokens.shape[0]
     input_indexes = jnp.arange(0, seq_len)
-    adapter_name = ""
-    if per_request_hyperparams.adapter_name:
-      adapter_name = per_request_hyperparams.adapter_name
-    lora_index = self.lora_manager.adapter_index(adapter_name)
+    lora_adapter_index = 0
+    if per_request_hyperparams and per_request_hyperparams.lora_adapter_index:
+      lora_adapter_index = per_request_hyperparams.lora_adapter_index
+    #   lora_adapter_index = self.lora_manager.adapter_index(adapter_name)
+    lora_adapter_index = jnp.asarray([lora_adapter_index])
     logits, updated_caches = self._call_model_prefill(
-        params, batched_token, input_indexes, lora_index
+        params, batched_token, input_indexes, lora_adapter_index
     )
     if len(logits.shape) == 3:  # b, seqlen, num words
       logits = logits[0]
@@ -199,7 +206,7 @@ class LoraPyTorchEngine(default_engine.PyTorchEngine):
     #       v, seq_len - true_length, true_length, axis=2))
     #   for k, v in updated_caches
     # ]
-    return Prefix(token, updated_caches, true_length, lora_index)
+    return Prefix(token, updated_caches, true_length, lora_adapter_index)
 
   def insert(
       self,
@@ -213,10 +220,12 @@ class LoraPyTorchEngine(default_engine.PyTorchEngine):
     #     decode_state,
     # )
     super_decode_state = super().insert(Prefix, decode_state, slot)
-    lora_indices = decode_state.lora_indics.at[slot].set(prefix.lora_index)
+    lora_adapter_indices = decode_state.lora_adapter_indices.at[slot].set(
+        prefix.lora_adapter_index
+    )
     return DecodeState(
         **vars(super_decode_state),
-        lora_indics=lora_indices,
+        lora_adapter_indices=lora_adapter_indices,
     )
 
   # pylint: disable-next=all
@@ -232,7 +241,7 @@ class LoraPyTorchEngine(default_engine.PyTorchEngine):
       input_pos,
       ragged_batch_index,
       ragged_block_index,
-      lora_indices,
+      lora_adapter_indices,
   ):
     if self.env.quant_config.enable_kv_quantization:
       caches_obj = [
@@ -260,7 +269,7 @@ class LoraPyTorchEngine(default_engine.PyTorchEngine):
         start,
         ragged_batch_index,
         ragged_block_index,
-        lora_indices,
+        lora_adapter_indices,
         lora_weight,
         lora_scaling,
     )
@@ -303,7 +312,7 @@ class LoraPyTorchEngine(default_engine.PyTorchEngine):
         decode_state.input_pos,
         ragged_batch_index,
         ragged_block_index,
-        decode_state.lora_indics,
+        decode_state.lora_adapter_indices,
     )
 
     next_token = self._sampling(logits, self.env.batch_size)
@@ -336,6 +345,7 @@ class LoraPyTorchEngine(default_engine.PyTorchEngine):
         decode_state.start,
         decode_state.input_pos + 1,
         mask,
+        decode_state.lora_adapter_indices,
     )
     print(
         "new_pos",
@@ -486,6 +496,8 @@ def create_lora_pytorch_engine(
     )
     env_data.model_type = model_name + "-" + param_size
     env_data.num_layers = args.num_hidden_layers
+    env_data.model_dim = args.hidden_size
+    env_data.ffn_dim = args.intermediate_size
     env = JetEngineEnvironment(env_data)
     print(f"Enviroment variables: {vars(env)}")
     pt_model = gemma_model_lora.GemmaModel(args, env)

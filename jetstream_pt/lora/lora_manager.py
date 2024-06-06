@@ -51,9 +51,9 @@ class LoraAdapter:
 
   def load_params(self) -> Dict[str, jax.Array]:
     weights = {}
-    with safe_open(self.ckpt_path, framework="pt", device="cpu") as f:
+    with safe_open(self.ckpt_path, framework="flax", device="cpu") as f:
       for key in f.keys():
-        weights[key] = torchjax.from_torch(f.get_tensor(key))
+        weights[key] = f.get_tensor(key).T.astype(jnp.bfloat16)
     return weights
 
 
@@ -65,6 +65,8 @@ class LoraAdapterManager:
     cfgs = env.lora_adapter_configs
     self.adapters = {cfg.name: LoraAdapter(cfg) for _, cfg in enumerate(cfgs)}
     self.model_dim = env.model_dim
+    self.num_heads = env.num_heads
+    self.head_dim = env.head_dim
     self.num_layers = env.num_layers
     # Leave the first slot for non lora case.
     self._num_slot = len(cfgs) + 1
@@ -83,8 +85,8 @@ class LoraAdapterManager:
     self.batched_weights = self._initialize_batched_weights(
         num_layers=self.num_layers, model_dim=self.model_dim
     )
-    self.batched_scaling = jnp.zeros((self._num_slot))
-    for key in self.adapters.key():
+    self.batched_scaling = jnp.zeros((self._num_slot), dtype=jnp.bfloat16)
+    for key in self.adapters.keys():
       self._load(key)
 
   def adapter_index(self, adapter_name: str) -> int:
@@ -101,8 +103,10 @@ class LoraAdapterManager:
     adapter.state.current_slot_number = self._next_available_slot_index
     slot = adapter.state.current_slot_number
     with jax.named_scope("InsertAdapter"):
-      self._insert_weight(weight, slot, adapter.target_module)
-    self.batched_scaling = self.batched_scaling.at[slot].set(adapter.scaling)
+      self._insert_weight(weight, slot)
+    self.batched_scaling = self.batched_scaling.at[slot].set(
+        adapter.scaling, dtype=jnp.bfloat16
+    )
 
     self._next_available_slot_index += 1
 
@@ -125,29 +129,36 @@ class LoraAdapterManager:
         return f"layers.{layer_number}.wq.lora_B"
     if "v_proj" in key:
       if "lora_A" in key:
-        return f"layers.{layer_number}.v_proj.lora_A"
+        return f"layers.{layer_number}.wv.lora_A"
       else:
-        return f"layers.{layer_number}.v_proj.lora_B"
+        return f"layers.{layer_number}.wv.lora_B"
     raise NotImplementedError("unknown weight key from user")
 
-  def _initialize_batched_weights(
-      self, num_layers: int, model_dim: int
-  ) -> Dict[str, jax.Array]:
+  def _initialize_batched_weights(self) -> Dict[str, jax.Array]:
     batched_weights = {}
-    batch_size = self._num_slot
-    for i in range(len(num_layers)):
+    for i in range(self.num_layers):
       for module in self.target_modules:
         wa_key = self._lora_weight_key_conversion(f"layers.{i}.{module}.lora_A")
         wb_key = self._lora_weight_key_conversion(f"layers.{i}.{module}.lora_B")
         match module:
           case "q_proj" | "v_proj":
             batched_weights[wa_key] = jax.device_put(
-                jnp.zeros(shape=(batch_size, model_dim, self.max_rank)),
+                jnp.zeros(
+                    shape=(self._num_slot, self.model_dim, self.max_rank),
+                    dtype=jnp.bfloat16,
+                ),
                 self.env.sharding_by_axis(1),
             )
 
             batched_weights[wb_key] = jax.device_put(
-                jnp.zeros(shape=(batch_size, self.max_rank, model_dim)),
+                jnp.zeros(
+                    shape=(
+                        self._num_slot,
+                        self.max_rank,
+                        self.num_heads * self.head_dim,
+                    ),
+                    dtype=jnp.bfloat16,
+                ),
                 self.env.sharding_by_axis(2),
             )
           case _:
@@ -162,10 +173,10 @@ class LoraAdapterManager:
       target_key = self._lora_weight_key_conversion(key)
 
       if "lora_A" in target_key:
-        tensor = jax.device_put(tensor, self.env.sharding_by_axis(1))
+        tensor = jax.device_put(tensor[None, ...], self.env.sharding_by_axis(1))
       else:
-        tensor = jax.device_put(tensor, self.env.sharding_by_axis(2))
+        tensor = jax.device_put(tensor[None, ...], self.env.sharding_by_axis(2))
 
       self.batched_weights[target_key] = jax.lax.dynamic_update_slice(
-          self.batched_weights[target_key].T, weight, (slot, 0, 0)
+          self.batched_weights[target_key], tensor, (slot, 0, 0)
       )

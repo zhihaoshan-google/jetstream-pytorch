@@ -158,16 +158,20 @@ class GemmaAttention(nn.Module):
     with jax.named_scope("Qproj"):
       xq = self.wq(hidden_states)
     if "q_proj" in self.target_lora_modules:
-      wq_lora_a_key = util.get_lora_weight_keys(lora_weights, "^.+wq\.loraA.*$")
+      wq_lora_a_key = util.get_lora_weight_keys(
+          lora_weights, "^.+wq\.lora_A.*$"
+      )
       assert len(wq_lora_a_key) == 1
       wq_lora_a = lora_weights[wq_lora_a_key[0]]
-      wq_lora_b_key = util.get_lora_weight_keys(lora_weights, "^.+wq\.loraB.*$")
+      wq_lora_b_key = util.get_lora_weight_keys(
+          lora_weights, "^.+wq\.lora_B.*$"
+      )
       assert len(wq_lora_b_key) == 1
       wq_lora_b = lora_weights[wq_lora_b_key[0]]
 
       with jax.named_scope("ApplyLora"):
         xq += util.apply_lora(
-            xq, lora_indices, wq_lora_a, wq_lora_b, lora_scaling
+            hidden_states, lora_indices, wq_lora_a, wq_lora_b, lora_scaling
         )
 
     with jax.named_scope("Kproj"):
@@ -176,16 +180,20 @@ class GemmaAttention(nn.Module):
     with jax.named_scope("Vproj"):
       xv = self.wv(hidden_states)
     if "v_proj" in self.target_lora_modules:
-      wv_lora_a_key = util.get_lora_weight_keys(lora_weights, "^.+wv\.loraA.*$")
+      wv_lora_a_key = util.get_lora_weight_keys(
+          lora_weights, "^.+wv\.lora_A.*$"
+      )
       assert len(wv_lora_a_key) == 1
       wv_lora_a = lora_weights[wv_lora_a_key[0]]
-      wv_lora_b_key = util.get_lora_weight_keys(lora_weights, "^.+wv\.loraB.*$")
+      wv_lora_b_key = util.get_lora_weight_keys(
+          lora_weights, "^.+wv\.lora_B.*$"
+      )
       assert len(wv_lora_b_key) == 1
       wv_lora_b = lora_weights[wv_lora_b_key[0]]
 
       with jax.named_scope("ApplyLora"):
         xv += util.apply_lora(
-            xv, lora_indices, wv_lora_a, wv_lora_b, lora_scaling
+            hidden_states, lora_indices, wv_lora_a, wv_lora_b, lora_scaling
         )
 
     xq = xq.view(batch_size, -1, self.num_heads, self.head_dim)
