@@ -185,13 +185,11 @@ class LoraPyTorchEngine(default_engine.PyTorchEngine):
       )
     seq_len = padded_tokens.shape[0]
     input_indexes = jnp.arange(0, seq_len)
-    lora_adapter_index = 0
-    if per_request_hyperparams and per_request_hyperparams.lora_adapter_index:
-      lora_adapter_index = per_request_hyperparams.lora_adapter_index
-    #   lora_adapter_index = self.lora_manager.adapter_index(adapter_name)
-    lora_adapter_index = jnp.asarray([lora_adapter_index])
+
+    lora_adapter_index = per_request_hyperparams.lora_adapter_index
+
     logits, updated_caches = self._call_model_prefill(
-        params, batched_token, input_indexes, lora_adapter_index
+        params, batched_token, input_indexes, jnp.asarray([lora_adapter_index])
     )
     if len(logits.shape) == 3:  # b, seqlen, num words
       logits = logits[0]
@@ -219,7 +217,7 @@ class LoraPyTorchEngine(default_engine.PyTorchEngine):
     #     prefix,
     #     decode_state,
     # )
-    super_decode_state = super().insert(Prefix, decode_state, slot)
+    super_decode_state = super().insert(prefix, decode_state, slot)
     lora_adapter_indices = decode_state.lora_adapter_indices.at[slot].set(
         prefix.lora_adapter_index
     )

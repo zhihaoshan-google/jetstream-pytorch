@@ -82,9 +82,7 @@ class LoraAdapterManager:
 
   def load_all_adapters(self):
     """Load all adapters to the device memory"""
-    self.batched_weights = self._initialize_batched_weights(
-        num_layers=self.num_layers, model_dim=self.model_dim
-    )
+    self.batched_weights = self._initialize_batched_weights()
     self.batched_scaling = jnp.zeros((self._num_slot), dtype=jnp.bfloat16)
     for key in self.adapters.keys():
       self._load(key)
@@ -105,7 +103,7 @@ class LoraAdapterManager:
     with jax.named_scope("InsertAdapter"):
       self._insert_weight(weight, slot)
     self.batched_scaling = self.batched_scaling.at[slot].set(
-        adapter.scaling, dtype=jnp.bfloat16
+        jnp.asarray(adapter.scaling, dtype=jnp.bfloat16)
     )
 
     self._next_available_slot_index += 1

@@ -27,7 +27,7 @@ def apply_lora(
   selected_batched_lora_a = batched_lora_a.index_select(0, indices)
   selected_batched_lora_b = batched_lora_b.index_select(0, indices)
   selected_scaling = batched_scaling.index_select(0, indices)[:, None, None]
-  output += (
+  output = (
       torch.bmm(
           torch.bmm(input, selected_batched_lora_a), selected_batched_lora_b
       )
